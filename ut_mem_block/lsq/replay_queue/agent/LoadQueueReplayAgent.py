@@ -124,9 +124,7 @@ class LoadQueueReplayAgent(Agent):
     @driver_method()
     async def replay(self, l2_hint: L2Hint):
         self.bundle.io._l2_hint._valid.value = l2_hint.valid
-        self.bundle.io._l2_hint._bits._sourceId = l2_hint.sourceId
-        self.bundle.io._l2_hint._bits._isKeyword = l2_hint.isKeyword
+        self.bundle.io._l2_hint._bits._sourceId.value = l2_hint.sourceId
+        self.bundle.io._l2_hint._bits._isKeyword.value = l2_hint.isKeyword
         await self.bundle.step(4)
         return self.bundle.LoadQueueReplay._scheduled
-    
-    
