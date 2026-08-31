@@ -2,14 +2,14 @@
 
 ## 测试目标
 
-解码单元的功能是对输入的指令进行解码，最终转换为后端可识别的微指令。输出的指令有两种类型：16位的压缩指令（RVC） 和 32位的普通指令（RVI）。本单元测试的主要目的是**检查Dcode模块是否能识别所有非法指令**。
+解码单元的功能是对输入的指令进行解码，最终转换为后端可识别的微指令。输出的指令有两种类型：16位的压缩指令（RVC） 和 32位的普通指令（RVI）。本单元测试检查 Decode 模块能否识别非法指令，并验证输出反压期间的 ready/valid 协议及复杂指令的多 uop 排空行为。
 
 测试基本流程为：
 
-1. 随机生成指令
-1. 把指令输给DUT，得到解码结果（结果种包含是否为异常指令）
-1. 把指令输给disasm，判断能否正常解析（disasm为RISC-V官方反汇编工具，可以认为 Golden）
-1. 对比DUT和disasm的结果判断是否一致
+1. 用固定编码验证合法/非法结果、反压和复杂指令排空
+1. 随机生成指令并输入 DUT，检查每条指令的握手、传输顺序和完成次数
+1. 用 disasm 提供随机指令的辅助诊断信息，但不把缺少架构状态的语法解析当作异常位 Golden
+1. 对固定用例的异常位和多 uop 属性做严格比较
 
 
 ## 测试环境 Env
@@ -23,7 +23,7 @@
 预解码阶段，[TBD]
 
 - **ut.decodestage**
-[TBD]
+提供 6 路输入和 6 路输出。当前 RTL 以 `io_out_0_ready` 计算全局输出容量，因此 Env 将 6 路 output ready 作为一个整体驱动，不支持部分 lane ready。
 
 
 依赖：
@@ -39,7 +39,9 @@
 |2|||检查是否能展开所有正常指令，<br>发现所有非法指令|RVC_EXPAND_ALL_16B|RANGE[`start~end`]: 16位压缩指令共有 2^16种可能，<br>通过不同的start-end指定输入指令的<br>遍历范围，遍历该范围内的输入是否<br>是合法或非法指令（start，end由用例指定）|
 |3||常规指令展开|遍历所有32bit指令，<br>检查是否合法|RVC_EXPAND_ALL_32B|检查项同上|
 |4|||随机生成N条32位指令，<br>检查是否合法|RVC_EXPAND_RANDOM_32B|POS_{i}：为了保证随机指令足够多，判断随机<br>生成的指令中第i位是否为1(0 <= i < 32)|
-|5|TBD|||||
+|5|decodestage|输出反压|检查全阻塞期间无握手且 payload 保持，恢复后仅传输一次|DECODE_OUTPUT_READY|ALL_STALLED、ALL_READY|
+|6|decodestage|复杂指令多 uop 解码|检查输入结束后继续运行直至最后一个 uop 握手|DECODE_COMPLEX_DRAIN|COMPLEX_LAST_UOP_FIRED|
+|7|decodestage|确定性非法指令|检查固定非法编码仅完成一次且置异常位|DECODE_KNOWN_ILLEGAL|KNOWN_ILLEGAL_COMPLETED|
 
 
 ## Env提供的验证接口(API)
@@ -73,7 +75,27 @@ class RVCExpander
 def rvc_expander(request) -> RVCExpander:
 ```
 
-#### 2. TBD
+#### 2. decodestage
+
+```python
+# 同步驱动 6 路 output ready；不允许部分 lane ready
+decoder.Set_output_ready(ready)
+
+# 驱动并采样一个周期，在上升沿前返回 ready/valid 握手快照
+cycle = decoder.Run_cycle(insts=(), output_ready=True)
+
+# 按输入握手推进，并在所有指令的 lastUop 握手后结束
+success = decode_run(decoder, inst_list, need_log_file=False)
+
+# 调试或协议检查可请求统计信息
+success, stats = decode_run(
+    decoder, inst_list, need_log_file=False, return_stats=True
+)
+```
+
+`decode_run` 会在输入全部接收后清空 input valid，继续运行直至所有架构指令的 `lastUop` 完成；如果超过按输入数量计算的超时上限则失败。默认返回值仍为布尔值，以兼容已有用例。
+
+随机指令用例中的 syntax-only disasm 没有当前扩展、CSR、VType 状态，也可能不了解 DUT 的自定义编码，因此只用于辅助诊断；随机结果严格检查指令传输与顺序，不把 disasm 当作异常位 Golden。异常位由固定合法序列和固定非法编码用例做严格比较。固定的复杂指令排空用例会先执行 `vsetvli`，并逐条检查多 uop 的 `firstUop`、`lastUop` 和 `numUops`。
 
 ## 用例说明
 
