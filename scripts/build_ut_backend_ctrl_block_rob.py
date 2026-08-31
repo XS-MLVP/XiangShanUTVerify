@@ -13,11 +13,14 @@
 # **************************************************************************************/
 
 
+from comm import UnsupportedDUTError
+
+
 TARGET_NAME = "Rob"
 
 
 def build(cfg):
-    return False
+    raise UnsupportedDUTError(f"{TARGET_NAME} does not have a build implementation")
 
 
 def line_coverage_files(cfg):
