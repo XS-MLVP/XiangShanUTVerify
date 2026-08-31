@@ -9,7 +9,7 @@ For example:
 1. Other non-DUT functionality tests, such as Python version, multi-node execution, etc.
 
 
-Run the tests using the following command:
-```python
-make test target=tests
+Run these tests directly, without the DUT/report plugin:
+```bash
+python3 -m pytest -q -p no:toffee-test tests
 ```

@@ -24,6 +24,12 @@ from comm import download_rtl, get_rtl_dir, init_log, new_report_name, process_d
 from comm import init_cfg, get_rtl_lnk_version, error
 
 
+def run_tests(pytest_args, report_dir, report_name, cfg):
+    pytest_exit_code = pytest.main(pytest_args, plugins=[__import__(__name__)])
+    process_doc_result(report_dir, report_name, cfg)
+    return int(pytest_exit_code)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run pytest")
     parser.add_argument("--config", type=str, help="config file", default=None)
@@ -95,9 +101,8 @@ def main():
         def _allure_dir(pdir, pname):
             return os.path.join(os.path.dirname(os.path.join(pdir, pname)), "allure")
         append_args.extend(["--alluredir", _allure_dir(report_dir, report_name)])
-    pytest.main(append_args, plugins=[__import__(__name__)])
-    process_doc_result(report_dir, report_name, cfg)
+    return run_tests(append_args, report_dir, report_name, cfg)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
