@@ -118,15 +118,21 @@ class LoadQueueReplayAgent(Agent):
         self.bundle.io._rawFull.value = rawFull
         self.bundle.io._ldWbPtr._flag.value = ldWbPtr.flag
         self.bundle.io._ldWbPtr._value.value = ldWbPtr.value
-        await self.bundle.step(2)
+        await self.bundle.step(1)
+        for i in range(2):
+            getattr(self.bundle.io._storeAddrIn, f'_{i}')._valid.value = False
+            getattr(self.bundle.io._storeDataIn, f'_{i}')._valid.value = False
+        self.bundle.io._tlb_hint_resp._valid.value = False
+        self.bundle.io._tl_d_channel._valid.value = False
+        await self.bundle.step(1)
         return self.bundle.LoadQueueReplay
     
     @driver_method()
     async def replay(self, l2_hint: L2Hint):
         self.bundle.io._l2_hint._valid.value = l2_hint.valid
-        self.bundle.io._l2_hint._bits._sourceId = l2_hint.sourceId
-        self.bundle.io._l2_hint._bits._isKeyword = l2_hint.isKeyword
-        await self.bundle.step(4)
+        self.bundle.io._l2_hint._bits._sourceId.value = l2_hint.sourceId
+        self.bundle.io._l2_hint._bits._isKeyword.value = l2_hint.isKeyword
+        await self.bundle.step(1)
+        self.bundle.io._l2_hint._valid.value = False
+        await self.bundle.step(3)
         return self.bundle.LoadQueueReplay._scheduled
-    
-    

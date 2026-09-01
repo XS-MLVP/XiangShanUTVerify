@@ -684,6 +684,147 @@ async def test_ctl_replay(loadqueue_replay_env: LoadQueueReplayEnv):
     await loadqueue_replay_env.agent.replay(l2_hint)
     assert loadqueue_replay_env.agent.bundle.io._replay._2._valid.value == 1
 
+
+def _drive_replay_inputs_idle(bundle):
+    for lane in range(3):
+        getattr(bundle.io._enq, f'_{lane}')._valid.value = False
+        getattr(bundle.io._replay, f'_{lane}')._ready.value = False
+    bundle.io._redirect._valid.value = False
+    bundle.io._l2_hint._valid.value = False
+    bundle.io._tl_d_channel._valid.value = False
+    bundle.io._tlb_hint_resp._valid.value = False
+    for lane in range(2):
+        getattr(bundle.io._storeAddrIn, f'_{lane}')._valid.value = False
+        getattr(bundle.io._storeDataIn, f'_{lane}')._valid.value = False
+    for name in ('_loadMisalignFull', '_rarFull', '_rawFull', '_sqEmpty'):
+        getattr(bundle.io, name).value = False
+    for name in ('_stAddrReadySqPtr', '_stDataReadySqPtr', '_ldWbPtr'):
+        pointer = getattr(bundle.io, name)
+        pointer._flag.value = False
+        pointer._value.value = 0
+    for index in range(56):
+        getattr(bundle.io._stAddrReadyVec, f'_{index}').value = False
+        getattr(bundle.io._stDataReadyVec, f'_{index}').value = False
+
+
+@toffee_test.testcase
+async def test_l2_hint_releases_only_the_matching_mshr(loadqueue_replay_env: LoadQueueReplayEnv):
+    await loadqueue_replay_env.agent.reset()
+    bundle = loadqueue_replay_env.agent.bundle
+    for lane in range(3):
+        getattr(bundle.io._replay, f'_{lane}')._ready.value = False
+    bundle.io._tl_d_channel._valid.value = False
+    # FreeList's canAllocate outputs are registered; allow one idle cycle after
+    # reset before presenting the first enqueue.
+    await bundle.step(1)
+
+    l2_miss = IOEnq(
+        valid=True,
+        robIdx_flag=True,
+        robIdx_value=89,
+        handledByMSHR=True,
+        rep_info_mshr_id=8,
+        rep_info_full_fwd=False,
+        rep_info_last_beat=True,
+        rep_info_causes=[False, False, False, False, True, False,
+                         False, False, False, False, False],
+    )
+    inner = await loadqueue_replay_env.agent.Update_queue(
+        [l2_miss, IOEnq(), IOEnq()],
+        IORedirect(),
+    )
+
+    assert inner._allocated._0.value == 1
+    assert inner._scheduled._0.value == 0
+    assert inner._blocking._0.value == 1
+    assert inner._cause._0.value == 1 << 4
+    assert inner._missMSHRId._0.value == 8
+    assert inner._dataInLastBeatReg._0.value == 1
+    assert inner._s0._loadNormalReplaySelMask.value == 0
+    assert bundle.io._replay._0._valid.value == 0
+
+    await loadqueue_replay_env.agent.replay(
+        L2Hint(valid=True, sourceId=7, isKeyword=True)
+    )
+    assert inner._scheduled._0.value == 0
+    assert inner._blocking._0.value == 1
+    assert bundle.io._replay._0._valid.value == 0
+
+    await loadqueue_replay_env.agent.replay(
+        L2Hint(valid=True, sourceId=8, isKeyword=True)
+    )
+    assert inner._scheduled._0.value == 1
+    assert inner._blocking._0.value == 0
+    assert bundle.io._replay._0._valid.value == 1
+    assert bundle.io._replay._0._bits._mshrid.value == 8
+    assert bundle.io._replay._0._bits._uop._robIdx._value.value == 89
+
+
+@toffee_test.testcase
+async def test_tl_refill_is_not_reused_for_a_later_entry(loadqueue_replay_env: LoadQueueReplayEnv):
+    await loadqueue_replay_env.agent.reset()
+    bundle = loadqueue_replay_env.agent.bundle
+    for lane in range(3):
+        getattr(bundle.io._replay, f'_{lane}')._ready.value = False
+    bundle.io._l2_hint._valid.value = False
+
+    await loadqueue_replay_env.agent.Update_blocking(
+        ReadySqPtr(),
+        ReadySqPtr(),
+        False,
+        [StoreAddrIn(), StoreAddrIn()],
+        [StoreDataIn(), StoreDataIn()],
+        [False] * 56,
+        [False] * 56,
+        TlbHint(),
+        TLChannel(valid=True, mshrid=8),
+        False,
+        IOldWbPtr(),
+        False,
+    )
+
+    l2_miss = IOEnq(
+        valid=True,
+        robIdx_flag=True,
+        robIdx_value=91,
+        handledByMSHR=True,
+        rep_info_mshr_id=8,
+        rep_info_full_fwd=False,
+        rep_info_last_beat=True,
+        rep_info_causes=[False, False, False, False, True, False,
+                         False, False, False, False, False],
+    )
+    inner = await loadqueue_replay_env.agent.Update_queue(
+        [l2_miss, IOEnq(), IOEnq()],
+        IORedirect(),
+    )
+
+    assert inner._allocated._0.value == 1
+    assert inner._scheduled._0.value == 0
+    assert inner._blocking._0.value == 1
+    assert bundle.io._replay._0._valid.value == 0
+
+    await loadqueue_replay_env.agent.Update_blocking(
+        ReadySqPtr(),
+        ReadySqPtr(),
+        False,
+        [StoreAddrIn(), StoreAddrIn()],
+        [StoreDataIn(), StoreDataIn()],
+        [False] * 56,
+        [False] * 56,
+        TlbHint(),
+        TLChannel(valid=True, mshrid=8),
+        False,
+        IOldWbPtr(),
+        False,
+    )
+    assert inner._blocking._0.value == 0
+    await bundle.step(2)
+    assert inner._scheduled._0.value == 1
+    assert bundle.io._replay._0._valid.value == 1
+    assert bundle.io._replay._0._bits._uop._robIdx._value.value == 91
+
+
 @toffee_test.testcase
 async def test_cold_queue(loadqueue_replay_env:LoadQueueReplayEnv):
     await loadqueue_replay_env.agent.reset()
@@ -846,8 +987,11 @@ async def test_random(loadqueue_replay_env: LoadQueueReplayEnv):
 async def loadqueue_replay_env(toffee_request: toffee_test.ToffeeRequest):
     import asyncio
     dut = toffee_request.create_dut(DUTLoadQueueReplay, "clock")
-    toffee.start_clock(dut)
     env = LoadQueueReplayEnv(dut)
+    env.agent.bundle.set_write_mode_as_imme()
+    _drive_replay_inputs_idle(env.agent.bundle)
+    env.agent.bundle.reset.value = True
+    toffee.start_clock(dut)
     toffee_request.add_cov_groups(init_replay_funcov(env))
 
     yield env
