@@ -52,7 +52,7 @@ class RecordingBundle:
         self.step_calls.append(cycles)
 
 
-def test_replay_drives_l2_hint_pins_without_replacing_them():
+def test_replay_drives_l2_hint_payload_and_pulses_valid():
     scheduled = object()
     bundle = RecordingBundle(scheduled)
     source_id_pin = bundle.source_id_pin
@@ -64,10 +64,11 @@ def test_replay_drives_l2_hint_pins_without_replacing_them():
     replay = LoadQueueReplayAgent.replay.__original_func__
     result = asyncio.run(replay(agent, l2_hint))
 
-    assert bundle.valid_pin.writes == [True]
+    assert bundle.valid_pin.writes == [True, False]
+    assert bundle.valid_pin.value is False
     assert bundle.io._l2_hint._bits._sourceId is source_id_pin
     assert bundle.io._l2_hint._bits._isKeyword is is_keyword_pin
     assert source_id_pin.writes == [7]
     assert is_keyword_pin.writes == [False]
-    assert bundle.step_calls == [4]
+    assert bundle.step_calls == [1, 3]
     assert result is scheduled
