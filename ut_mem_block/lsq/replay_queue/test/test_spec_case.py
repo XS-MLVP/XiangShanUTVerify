@@ -696,7 +696,7 @@ def _drive_replay_inputs_idle(bundle):
     for lane in range(2):
         getattr(bundle.io._storeAddrIn, f'_{lane}')._valid.value = False
         getattr(bundle.io._storeDataIn, f'_{lane}')._valid.value = False
-    for name in ('_loadMisalignFull', '_rarFull', '_rawFull', '_lqFull', '_sqEmpty'):
+    for name in ('_loadMisalignFull', '_rarFull', '_rawFull', '_sqEmpty'):
         getattr(bundle.io, name).value = False
     for name in ('_stAddrReadySqPtr', '_stDataReadySqPtr', '_ldWbPtr'):
         pointer = getattr(bundle.io, name)
