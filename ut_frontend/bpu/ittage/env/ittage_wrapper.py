@@ -1,19 +1,28 @@
 import os.path
 import random
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 
 import toffee
 from toffee import ClockCycles
-from dut.ITTage import DUTITTage
 from ..util.common import get_folded_hist
 from .bundle import *
+
+if TYPE_CHECKING:
+    from dut.ITTage import DUTITTage
 
 __all__ = ['ITTageWrapper']
 
 
+# The current generated RTL clears five 128-entry tables in parallel and was
+# observed ready 130 cycles after reset deassertion. Keep ample headroom for
+# wrapper/RTL evolution without restoring an unbounded wait.
+DEFAULT_READY_TIMEOUT_CYCLES = 1024
+
+
 class ITTageWrapper:
-    def __init__(self, dut: DUTITTage):
+    def __init__(self, dut: "DUTITTage", ready_timeout_cycles: int = DEFAULT_READY_TIMEOUT_CYCLES):
         # Create DUT
         self.dut = dut
         self.dut.InitClock("clock")
@@ -26,7 +35,7 @@ class ITTageWrapper:
         self.pipeline_ctrl = PipelineCtrl.from_prefix("io_").set_name("ittage_pipeline_ctrl").bind(self.dut)
 
         # Reset
-        self.reset()
+        self.reset(ready_timeout_cycles)
 
     def finalize(self):
         self.dut.Finish()
@@ -122,12 +131,24 @@ class ITTageWrapper:
     def update_async(self, update_req):
         return toffee.create_task(self.__update_async__(update_req))
 
-    def reset(self):
+    def reset(self, ready_timeout_cycles: int = DEFAULT_READY_TIMEOUT_CYCLES):
+        if ready_timeout_cycles <= 0:
+            raise ValueError("ready_timeout_cycles must be greater than zero")
+
         self.dut.reset.value = 1
         self.xclock.Step(1)
         self.dut.reset.value = 0
+
+        waited_cycles = 0
         while self.dut.io_s1_ready.value == 0:
+            if waited_cycles >= ready_timeout_cycles:
+                raise TimeoutError(
+                    "ITTage reset timed out after "
+                    f"{waited_cycles} cycles waiting for io_s1_ready=1 "
+                    f"(last value: {self.dut.io_s1_ready.value})"
+                )
             self.xclock.Step(1)
+            waited_cycles += 1
         self.xclock.Step(10)
 
     def reset_async(self):
